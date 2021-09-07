@@ -83,6 +83,6 @@ int biglib_index(biglib_big* big, const char* name);
 int biglib_freeFile(biglib_file* file);
 int biglib_free(biglib_big* big);
 
-int biglib_getError();
+int biglib_getError(char* log, int logLen);
 
 #endif
