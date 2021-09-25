@@ -69,6 +69,7 @@ biglib_big* biglib_open(FILE* stream){
 		big->files[i]->name = readString(stream);
 		big->files[i]->type = BIGLIB_TYPE_STREAM_AREA;
 		big->files[i]->source = file;
+		big->files[i]->cursor = 0;
 	}
 
 	err = 0;
@@ -187,7 +188,124 @@ biglib_big* biglib_readMem(const void* data, size_t data_len){
 
 
 
-unsigned char* biglib_get(biglib_big* big, const char* name, size_t* size){
+size_t biglib_getSize(biglib_big* big, const char* name){
+	if (!big || !name){
+		err = BIGLIB_ERR_ARGUMMENT_MISSING;
+		return 0;
+	}
+	if (!biglib_exists(big, name)){
+		err = BIGLIB_ERR_FILENAME_INVALID;
+		return 0;
+	}
+
+	biglib_file* file = big->files[biglib_index(big, name)];
+	switch (file->type){
+		size_t size;
+		long int pos;
+		FILE* stream;
+		case BIGLIB_TYPE_BYTE_ARRAY:
+			return ((biglib_source_byte_array*)file->source)->size;
+			break;
+		case BIGLIB_TYPE_STREAM:
+			pos = ftell(file->source);
+			fseek(file->source, 0, SEEK_END);
+			size = ftell(file->source);
+			fseek(file->source, pos, SEEK_SET);
+			return size;
+			break;
+		case BIGLIB_TYPE_FILENAME:
+			stream = fopen(file->source, "rb");
+			if (!stream)
+				return 0;
+			fseek(stream, 0, SEEK_END);
+			size = ftell(stream);
+			fclose(stream);
+			return size;
+			break;
+		case BIGLIB_TYPE_STREAM_AREA:
+			return ((biglib_source_stream_area*)file->source)->size;
+			break;
+	}
+	return 0;
+}
+
+int biglib_fseek(biglib_big* big, const char* name, long int offset, int origin){
+	if (!big || !name){
+		err = BIGLIB_ERR_ARGUMMENT_MISSING;
+		return 0;
+	}
+	if (!biglib_exists(big, name)){
+		err = BIGLIB_ERR_FILENAME_INVALID;
+		return 0;
+	}
+
+	biglib_file* file = big->files[biglib_index(big, name)];
+	size_t size = biglib_getSize(big, name);
+	
+
+	switch (origin){
+		case SEEK_SET:
+			file->cursor = offset;
+			break;
+		case SEEK_CUR:
+			file->cursor += offset;
+			break;
+		case SEEK_END:
+			file->cursor = size+offset;
+			break;
+	}
+	if (file->cursor<0)
+		file->cursor = 0;
+	else if (file->cursor > size)
+		file->cursor = size;
+}
+
+int biglib_fgetc(biglib_big* big, const char* name){
+	if (!big || !name){
+		err = BIGLIB_ERR_ARGUMMENT_MISSING;
+		return 0;
+	}
+	if (!biglib_exists(big, name)){
+		err = BIGLIB_ERR_FILENAME_INVALID;
+		return 0;
+	}
+
+	biglib_file* file = big->files[biglib_index(big, name)];
+	if (file->cursor >= biglib_getSize(big, name))
+		return EOF;
+	int ch = 0;
+	FILE* stream;
+	long int pos;
+	switch (file->type){
+		case BIGLIB_TYPE_BYTE_ARRAY:
+			ch = ((biglib_source_byte_array*)file->source)->data[file->cursor];
+			break;
+		case BIGLIB_TYPE_STREAM:
+			stream = file->source;
+			pos = ftell(stream);
+			fseek(stream, file->cursor, SEEK_SET);
+			ch = fgetc(stream);
+			fseek(stream, pos, SEEK_SET);
+			break;
+		case BIGLIB_TYPE_FILENAME:
+			stream = fopen(file->source, "rb");
+			fseek(stream, file->cursor, SEEK_SET);
+			ch = fgetc(stream);
+			fclose(stream);
+			break;
+		case BIGLIB_TYPE_STREAM_AREA:
+			stream = ((biglib_source_stream_area*)file->source)->stream;
+			pos = ftell(stream);
+			fseek(stream, ((biglib_source_stream_area*)file->source)->location+file->cursor, SEEK_SET);
+			ch = fgetc(stream);
+			fseek(stream, pos, SEEK_SET);
+			break;
+	}
+	file->cursor++;
+	return ch;
+}
+
+char* biglib_fgets(biglib_big* big, const char* name, char* str, int count){
 	if (!big || !name){
 		err = BIGLIB_ERR_ARGUMMENT_MISSING;
 		return NULL;
@@ -196,57 +314,135 @@ unsigned char* biglib_get(biglib_big* big, const char* name, size_t* size){
 		err = BIGLIB_ERR_FILENAME_INVALID;
 		return NULL;
 	}
-	biglib_file* file = big->files[biglib_index(big, name)];
-	unsigned char* data;
-	size_t _size;
-	FILE* stream;
-	int long pos;
 
+	biglib_file* file = big->files[biglib_index(big, name)];
+	if (file->cursor >= biglib_getSize(big, name))
+		return NULL;
+	unsigned int n;
+	FILE* stream;
+	long int pos;
+	int ch = 0;
 	switch (file->type){
-		case (BIGLIB_TYPE_BYTE_ARRAY):
-			_size = ((biglib_source_byte_array*)(file->source))->size;
-			data = malloc(_size);
-			for (size_t i = 0; i < _size; i++)
-				data[i] = ((biglib_source_byte_array*)(file->source))->data[i];
-			break;
-		case (BIGLIB_TYPE_FILENAME):
-			stream = fopen(file->source, "rb");
-			if (!stream){
-				err = BIGLIB_ERR_FAILED_TO_OPEN_FILE;
-				return NULL;
+		case BIGLIB_TYPE_BYTE_ARRAY:
+			for (n = 0; n < count-1; n++){
+				ch = ((biglib_source_byte_array*)file->source)->data[file->cursor];
+				file->cursor++;
+				if (ch == '\n' || ch == EOF)
+					break;
+				str[n] = ((char)ch);
 			}
-			fseek(stream, 0, SEEK_END);
-			_size = ftell(stream);
-			data = malloc(_size);
-			fseek(stream, 0, SEEK_SET);
-			fread(data, 1, _size, stream);
-			fclose(stream);
+			str[n] = '\0';
 			break;
-		case (BIGLIB_TYPE_STREAM):
+		case BIGLIB_TYPE_STREAM:
 			stream = file->source;
 			pos = ftell(stream);
-			fseek(stream, 0, SEEK_END);
-			_size = ftell(stream);
-			fseek(stream, 0, SEEK_SET);
-			data = malloc(_size);
-			fread(data, 1, _size, stream);
+			fseek(stream, file->cursor, SEEK_SET);
+			for (n = 0; n < count-1; n++){
+				ch = fgetc(stream);
+				file->cursor++;
+				if (ch == '\n' || ch == EOF)
+					break;
+				str[n] = ((char)ch);
+			}
+			str[n] = '\0';
 			fseek(stream, pos, SEEK_SET);
 			break;
-		case (BIGLIB_TYPE_STREAM_AREA):
-			stream = ((biglib_source_stream_area*)(file->source))->stream;
+		case BIGLIB_TYPE_FILENAME:
+			stream = fopen(file->source, "rb");
+			fseek(stream, file->cursor, SEEK_SET);
+			for (n = 0; n < count-1; n++){
+				ch = fgetc(stream);
+				file->cursor++;
+				if (ch == '\n' || ch == EOF)
+					break;
+				str[n] = ((char)ch);
+			}
+			str[n] = '\0';
+			fclose(stream);
+			break;
+		case BIGLIB_TYPE_STREAM_AREA:
+			stream = ((biglib_source_stream_area*)file->source)->stream;
 			pos = ftell(stream);
-			_size = ((biglib_source_stream_area*)(file->source))->size;
-			fseek(stream, ((biglib_source_stream_area*)(file->source))->location, SEEK_SET);
-			data = malloc(_size);
-			fread(data, 1, _size, stream);
+			fseek(stream, ((biglib_source_stream_area*)file->source)->location+file->cursor, SEEK_SET);
+			for (n = 0; n < count-1; n++){
+				ch = fgetc(stream);
+				file->cursor++;
+				if (ch == '\n' || ch == EOF)
+					break;
+				str[n] = ((char)ch);
+			}
+			str[n] = '\0';
 			fseek(stream, pos, SEEK_SET);
 			break;
 	}
-
-	*size = _size;
-	return data;
+	return str;
 }
 
+size_t biglib_fread(biglib_big* big, const char* name, void* buffer, size_t size, size_t count){
+	if (!big || !name){
+		err = BIGLIB_ERR_ARGUMMENT_MISSING;
+		return 0;
+	}
+	if (!biglib_exists(big, name)){
+		err = BIGLIB_ERR_FILENAME_INVALID;
+		return 0;
+	}
+
+	biglib_file* file = big->files[biglib_index(big, name)];
+	if (file->cursor >= biglib_getSize(big, name))
+		return 0;
+	size_t ns;
+	size_t n;
+	FILE* stream;
+	long int pos;
+	long int oldCursor = file->cursor;
+	switch (file->type){
+		case BIGLIB_TYPE_BYTE_ARRAY:
+			for (n = 0; n < count; n++){
+				for (ns = 0; ns < size; ns++){
+					((char*)buffer)[n*size+ns] = ((biglib_source_byte_array*)file->source)->data[file->cursor];
+					file->cursor++;
+				}
+			}
+			break;
+		case BIGLIB_TYPE_STREAM:
+			stream = file->source;
+			pos = ftell(stream);
+			fseek(stream, file->cursor, SEEK_SET);
+			for (n = 0; n < count; n++){
+				for (ns = 0; ns < size; ns++){
+					((char*)buffer)[n*size+ns] = fgetc(stream);
+					file->cursor++;
+				}
+			}
+			fseek(stream, pos, SEEK_SET);
+			break;
+		case BIGLIB_TYPE_FILENAME:
+			stream = fopen(file->source, "rb");
+			fseek(stream, file->cursor, SEEK_SET);
+			for (n = 0; n < count; n++){
+				for (ns = 0; ns < size; ns++){
+					((char*)buffer)[n*size+ns] = fgetc(stream);
+					file->cursor++;
+				}
+			}
+			fclose(stream);
+			break;
+		case BIGLIB_TYPE_STREAM_AREA:
+			stream = ((biglib_source_stream_area*)file->source)->stream;
+			pos = ftell(stream);
+			fseek(stream, ((biglib_source_stream_area*)file->source)->location+file->cursor, SEEK_SET);
+			for (n = 0; n < count; n++){
+				for (ns = 0; ns < size; ns++){
+					((char*)buffer)[n*size+ns] = fgetc(stream);
+					file->cursor++;
+				}
+			}
+			fseek(stream, pos, SEEK_SET);
+			break;
+	}
+	return file->cursor - oldCursor;
+}
 
 
 
@@ -425,6 +621,7 @@ int biglib_addFile(biglib_big* big, const char* name, const char* filename){
 	strcpy(file->name, name);
 	file->type = BIGLIB_TYPE_FILENAME;
 	file->source = malloc(strlen(filename)+1);
+	file->cursor = 0;
 	strcpy(file->source, filename);
 	big->files = realloc(big->files, sizeof(void*)*(big->amount+1));
 	big->files[big->amount++] = file;
@@ -447,6 +644,7 @@ int biglib_addData(biglib_big* big, const char* name, const unsigned char* data,
 	strcpy(file->name, name);
 	file->type = BIGLIB_TYPE_BYTE_ARRAY;
 	file->source = malloc(sizeof(biglib_source_byte_array));
+	file->cursor = 0;
 	biglib_source_byte_array* source = file->source;
 	source->data = malloc(size);
 	if (!source->data){
@@ -480,6 +678,7 @@ int biglib_addStream(biglib_big* big, const char* name, FILE* stream){
 	strcpy(file->name, name);
 	file->type = BIGLIB_TYPE_STREAM;
 	file->source = stream;
+	file->cursor = 0;
 	big->files = realloc(big->files, sizeof(void*)*(big->amount+1));
 	big->files[big->amount++] = file;
 
@@ -501,6 +700,7 @@ int biglib_addStreamArea(biglib_big* big, const char* name, FILE* stream, unsign
 	strcpy(file->name, name);
 	file->type = BIGLIB_TYPE_STREAM_AREA;
 	file->source = malloc(sizeof(biglib_source_stream_area));
+	file->cursor = 0;
 	biglib_source_stream_area* source = file->source;
 	source->stream = stream;
 	source->size = size;

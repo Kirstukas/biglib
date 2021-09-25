@@ -1,6 +1,7 @@
 #ifndef BIGLIB_H
 #define BIGLIB_H
 
+#include <stdio.h>
 #include <stdint.h>
 
 enum {
@@ -36,6 +37,7 @@ typedef struct {
 	char* name;
 	unsigned int type;
 	void* source;
+	long int cursor;
 }biglib_file;
 
 typedef struct {
@@ -56,7 +58,11 @@ biglib_big* biglib_readFile(const char* filename);
 biglib_big* biglib_readMem(const void* data, size_t data_len);
 #endif
 
-unsigned char* biglib_get(biglib_big* big, const char* name, size_t* size);
+size_t biglib_getSize(biglib_big* big, const char* name);
+int biglib_fseek(biglib_big* big, const char* name, long int offset, int origin);
+int biglib_fgetc(biglib_big* big, const char* name);
+char* biglib_fgets(biglib_big* big, const char* name, char* str, int count);
+size_t biglib_fread(biglib_big* big, const char* name, void* buffer, size_t size, size_t count);
 
 int biglib_write(biglib_big* big, FILE* stream);
 int biglib_writeFile(biglib_big* big, const char* filename);
