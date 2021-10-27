@@ -8,6 +8,7 @@
 #define DEBUG_LINE_CHECK printf("Debug print at line \x1B[96m%d\x1B[0m in \x1B[33m%s\x1B[0m\n", __LINE__, __FILE__);
 
 static unsigned int err;
+static char errStr[512];
 
 
 
@@ -86,6 +87,7 @@ biglib_big* biglib_openFile(const char* filename){
 
 	if (!file){
 		err = BIGLIB_ERR_FAILED_TO_OPEN_FILE;
+		strcpy(errStr, filename);
 		return NULL;
 	}
 
@@ -109,6 +111,7 @@ biglib_big* biglib_openMem(const void* data, size_t data_len){
 
 	if (!file){
 		err = BIGLIB_ERR_FAILED_TO_OPEN_FILE;
+		strcpy(errStr, "[MEMORY]");
 		return NULL;
 	}
 
@@ -475,6 +478,7 @@ int biglib_write(biglib_big* big, FILE* stream){
 					free(source);
 					free(size);
 					err = BIGLIB_ERR_FAILED_TO_OPEN_FILE;
+					strcpy(errStr, big->files[i]->source);
 					return 0;
 				}
 				fseek(source[i], 0, SEEK_END);
@@ -557,6 +561,7 @@ int biglib_writeFile(biglib_big* big, const char* filename){
 	FILE* file = fopen(filename, "wb");
 	if (!file){
 		err = BIGLIB_ERR_FAILED_TO_OPEN_FILE;
+		strcpy(errStr, filename);
 		return 0;
 	}
 
@@ -579,6 +584,7 @@ unsigned char* biglib_writeMem(biglib_big* big){
 	FILE* file = open_memstream((char**)(&data), &data_len);
 	if (!file){
 		err = BIGLIB_ERR_FAILED_TO_OPEN_FILE;
+		strcpy(errStr, "[MEMORY]");
 		return NULL;
 	}
 
@@ -865,33 +871,33 @@ int biglib_free(biglib_big* big){
 }
 
 int biglib_getError(char* log, int logLen){
-	char* errStr;
 	switch (err){
 		case 0:
-			errStr = "No error";
+			strncpy(log, "No error", logLen);
 			break;
 		case BIGLIB_ERR_NOT_SUPPORTED:
-			errStr = "The function is not supported on this OS";
+			strncpy(log, "The function is not supported on this OS", logLen-1);
 			break;
 		case BIGLIB_ERR_INVALID_FILE:
-			errStr = "The file format does not match csf file format";
+			strncpy(log, "The file format does not match big file format", logLen-1);
 			break;
 		case BIGLIB_ERR_FAILED_TO_OPEN_FILE:
-			errStr = "Failed to open file eather for read or write";
+			strncpy(log, "Failed to open file eather for read or write \"", logLen);
+			strncat(log, errStr, logLen-strlen(log)-1);
+			strncat(log, "\"", logLen-strlen(log)-1);
 			break;
 		case BIGLIB_ERR_FILENAME_TAKEN:
-			errStr = "The file with the specified name already exists";
+			strncpy(log, "The file with the specified name already exists", logLen-1);
 			break;
 		case BIGLIB_ERR_FILENAME_INVALID:
-			errStr = "The file with specified name could not be found";
+			strncpy(log, "The file with specified name could not be found", logLen-1);
 			break;
 		case BIGLIB_ERR_ARGUMMENT_MISSING:
-			errStr = "One or more required argumments are missing";
+			strncpy(log, "One or more required argumments are missing", logLen-1);
 			break;
 		case BIGLIB_ERR_ALLOC_FAIL:
-			errStr = "Failed to allocate memory";
+			strncpy(log, "Failed to allocate memory", logLen-1);
 			break;
 	}
-	strncpy(log, errStr, logLen);
 	return err;
 }
